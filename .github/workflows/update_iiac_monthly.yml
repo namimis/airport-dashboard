@@ -1,0 +1,43 @@
+name: Update IIAC monthly data
+
+on:
+  schedule:
+    # 매월 10일 오전 9시 KST 실행
+    # GitHub Actions schedule은 기본적으로 UTC 기준입니다.
+    # KST 09:00 = UTC 00:00
+    - cron: "0 0 10 * *"
+
+  workflow_dispatch:
+    inputs:
+      month:
+        description: "적재할 월. YYYYMM 형식. 비워두면 한국 시간 기준 직전 월을 적재합니다."
+        required: false
+        default: ""
+
+jobs:
+  update-iiac:
+    runs-on: ubuntu-latest
+
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      PUBLIC_DATA_KEY: ${{ secrets.PUBLIC_DATA_KEY }}
+      TARGET_MONTH: ${{ github.event.inputs.month || '' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas requests supabase numpy
+
+      - name: Run IIAC monthly update
+        run: |
+          python scripts/update_iiac_monthly.py --month "$TARGET_MONTH"
