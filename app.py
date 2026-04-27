@@ -86,7 +86,74 @@ def load_airport_stats():
 
 
 df = load_airport_stats()
+@st.cache_data(ttl=600)
+def load_weekly_route_summary():
+    supabase = create_client(
+        st.secrets["SUPABASE_URL"],
+        st.secrets["SUPABASE_KEY"]
+    )
 
+    page_size = 1000
+    start = 0
+    all_rows = []
+
+    while True:
+        end = start + page_size - 1
+
+        response = (
+            supabase
+            .table("airport_weekly_city_summary")
+            .select(
+                "snapshot_date, service_window_start, service_window_end, "
+                "source_name, origin_airport_code, origin_airport_name, "
+                "destination_airport_code, destination_airport_name, "
+                "destination_country, destination_city, "
+                "weekly_departure_flights, schedule_row_count, flight_no_count"
+            )
+            .order("snapshot_date", desc=True)
+            .range(start, end)
+            .execute()
+        )
+
+        rows = response.data or []
+        all_rows.extend(rows)
+
+        if len(rows) < page_size:
+            break
+
+        start += page_size
+
+    df_weekly = pd.DataFrame(all_rows)
+
+    if df_weekly.empty:
+        return df_weekly
+
+    date_cols = [
+        "snapshot_date",
+        "service_window_start",
+        "service_window_end"
+    ]
+
+    for col in date_cols:
+        df_weekly[col] = pd.to_datetime(df_weekly[col], errors="coerce")
+
+    number_cols = [
+        "weekly_departure_flights",
+        "schedule_row_count",
+        "flight_no_count"
+    ]
+
+    for col in number_cols:
+        df_weekly[col] = pd.to_numeric(df_weekly[col], errors="coerce").fillna(0).astype(int)
+
+    df_weekly["source_name"] = df_weekly["source_name"].fillna("UNKNOWN")
+    df_weekly["origin_airport_name"] = df_weekly["origin_airport_name"].fillna("미상")
+    df_weekly["destination_country"] = df_weekly["destination_country"].fillna("미분류")
+    df_weekly["destination_city"] = df_weekly["destination_city"].fillna("미분류")
+    df_weekly["destination_airport_code"] = df_weekly["destination_airport_code"].fillna("")
+    df_weekly["destination_airport_name"] = df_weekly["destination_airport_name"].fillna("미분류")
+
+    return df_weekly
 
 # ------------------------------------------------------------
 # 데이터 없음 처리
@@ -535,7 +602,286 @@ st.dataframe(
 
 st.divider()
 
+# ------------------------------------------------------------
+# 주간 국제선 출발 스케줄
+# ------------------------------------------------------------
+st.subheader("주간 국제선 출발 스케줄")
 
+df_weekly = load_weekly_route_summary()
+
+if df_weekly.empty:
+    st.info("아직 주간 국제선 출발 스케줄 데이터가 없습니다.")
+else:
+    latest_snapshot_date = df_weekly["snapshot_date"].max()
+
+    weekly_latest_df = df_weekly[
+        df_weekly["snapshot_date"] == latest_snapshot_date
+    ].copy()
+
+    service_window_start = weekly_latest_df["service_window_start"].min()
+    service_window_end = weekly_latest_df["service_window_end"].max()
+
+    st.caption(
+        f"수집일: {latest_snapshot_date.strftime('%Y-%m-%d')} / "
+        f"대상 기간: {service_window_start.strftime('%Y-%m-%d')} ~ {service_window_end.strftime('%Y-%m-%d')}"
+    )
+
+    weekly_origin_options = sorted(
+        weekly_latest_df["origin_airport_name"].dropna().unique().tolist()
+    )
+
+    weekly_country_options = sorted(
+        weekly_latest_df["destination_country"].dropna().unique().tolist()
+    )
+
+    filter_col1, filter_col2, filter_col3 = st.columns(3)
+
+    with filter_col1:
+        selected_weekly_origins = st.multiselect(
+            "출발공항",
+            options=weekly_origin_options,
+            default=weekly_origin_options,
+            key="weekly_origin_filter"
+        )
+
+    with filter_col2:
+        selected_weekly_countries = st.multiselect(
+            "도착국가",
+            options=weekly_country_options,
+            default=[],
+            key="weekly_country_filter"
+        )
+
+    with filter_col3:
+        weekly_top_n = st.slider(
+            "주간 스케줄 TOP N",
+            min_value=5,
+            max_value=30,
+            value=15,
+            step=5,
+            key="weekly_top_n"
+        )
+
+    weekly_filtered_df = weekly_latest_df.copy()
+
+    if selected_weekly_origins:
+        weekly_filtered_df = weekly_filtered_df[
+            weekly_filtered_df["origin_airport_name"].isin(selected_weekly_origins)
+        ]
+
+    if selected_weekly_countries:
+        weekly_filtered_df = weekly_filtered_df[
+            weekly_filtered_df["destination_country"].isin(selected_weekly_countries)
+        ]
+
+    if weekly_filtered_df.empty:
+        st.warning("선택한 조건에 해당하는 주간 스케줄 데이터가 없습니다.")
+    else:
+        # ------------------------------------------------------------
+        # 국가별 집계
+        # ------------------------------------------------------------
+        weekly_country_summary = (
+            weekly_filtered_df
+            .groupby("destination_country", as_index=False)
+            .agg(
+                weekly_departure_flights=("weekly_departure_flights", "sum")
+            )
+            .sort_values("weekly_departure_flights", ascending=False)
+        )
+
+        # ------------------------------------------------------------
+        # 도시별 집계
+        # ------------------------------------------------------------
+        weekly_city_summary = (
+            weekly_filtered_df
+            .groupby(["destination_country", "destination_city"], as_index=False)
+            .agg(
+                weekly_departure_flights=("weekly_departure_flights", "sum")
+            )
+            .sort_values("weekly_departure_flights", ascending=False)
+        )
+
+        # ------------------------------------------------------------
+        # 목적지 공항별 집계
+        # ------------------------------------------------------------
+        weekly_airport_summary = (
+            weekly_filtered_df
+            .groupby(
+                [
+                    "destination_country",
+                    "destination_city",
+                    "destination_airport_code",
+                    "destination_airport_name"
+                ],
+                as_index=False
+            )
+            .agg(
+                weekly_departure_flights=("weekly_departure_flights", "sum")
+            )
+            .sort_values("weekly_departure_flights", ascending=False)
+        )
+
+        top_country_row = weekly_country_summary.iloc[0]
+        top_city_row = weekly_city_summary.iloc[0]
+
+        destination_city_count = (
+            weekly_city_summary[
+                weekly_city_summary["destination_city"] != "미분류"
+            ]["destination_city"]
+            .nunique()
+        )
+
+        weekly_kpi_col1, weekly_kpi_col2, weekly_kpi_col3 = st.columns(3)
+
+        weekly_kpi_col1.metric(
+            "최다 출발 국가",
+            str(top_country_row["destination_country"]),
+            f"{int(top_country_row['weekly_departure_flights']):,}편"
+        )
+
+        weekly_kpi_col2.metric(
+            "최다 출발 도시",
+            str(top_city_row["destination_city"]),
+            f"{int(top_city_row['weekly_departure_flights']):,}편"
+        )
+
+        weekly_kpi_col3.metric(
+            "운항 목적지 도시 수",
+            f"{destination_city_count:,}개"
+        )
+
+        st.divider()
+
+        # ------------------------------------------------------------
+        # 국가별 TOP 차트
+        # ------------------------------------------------------------
+        st.subheader(f"국가별 주간 출발편 수 TOP {weekly_top_n}")
+
+        country_top = weekly_country_summary.head(weekly_top_n)
+
+        fig_weekly_country = px.bar(
+            country_top.sort_values("weekly_departure_flights", ascending=True),
+            x="weekly_departure_flights",
+            y="destination_country",
+            orientation="h",
+            text="weekly_departure_flights",
+            labels={
+                "weekly_departure_flights": "주간 출발편 수",
+                "destination_country": "도착국가"
+            }
+        )
+
+        fig_weekly_country.update_traces(
+            texttemplate="%{text:,}",
+            textposition="outside"
+        )
+
+        fig_weekly_country.update_layout(
+            yaxis_title=None,
+            xaxis_title="주간 출발편 수"
+        )
+
+        st.plotly_chart(fig_weekly_country, use_container_width=True)
+
+        st.divider()
+
+        # ------------------------------------------------------------
+        # 도시별 TOP 차트
+        # ------------------------------------------------------------
+        st.subheader(f"도시별 주간 출발편 수 TOP {weekly_top_n}")
+
+        city_top = weekly_city_summary.head(weekly_top_n).copy()
+        city_top["city_label"] = (
+            city_top["destination_city"]
+            + " · "
+            + city_top["destination_country"]
+        )
+
+        fig_weekly_city = px.bar(
+            city_top.sort_values("weekly_departure_flights", ascending=True),
+            x="weekly_departure_flights",
+            y="city_label",
+            orientation="h",
+            text="weekly_departure_flights",
+            labels={
+                "weekly_departure_flights": "주간 출발편 수",
+                "city_label": "도착도시"
+            }
+        )
+
+        fig_weekly_city.update_traces(
+            texttemplate="%{text:,}",
+            textposition="outside"
+        )
+
+        fig_weekly_city.update_layout(
+            yaxis_title=None,
+            xaxis_title="주간 출발편 수"
+        )
+
+        st.plotly_chart(fig_weekly_city, use_container_width=True)
+
+        st.divider()
+
+        # ------------------------------------------------------------
+        # 목적지 공항별 TOP 차트
+        # ------------------------------------------------------------
+        st.subheader(f"목적지 공항별 주간 출발편 수 TOP {weekly_top_n}")
+
+        airport_top = weekly_airport_summary.head(weekly_top_n).copy()
+        airport_top["airport_label"] = (
+            airport_top["destination_airport_code"].astype(str)
+            + " · "
+            + airport_top["destination_airport_name"].astype(str)
+        )
+
+        fig_weekly_airport = px.bar(
+            airport_top.sort_values("weekly_departure_flights", ascending=True),
+            x="weekly_departure_flights",
+            y="airport_label",
+            orientation="h",
+            text="weekly_departure_flights",
+            labels={
+                "weekly_departure_flights": "주간 출발편 수",
+                "airport_label": "목적지 공항"
+            }
+        )
+
+        fig_weekly_airport.update_traces(
+            texttemplate="%{text:,}",
+            textposition="outside"
+        )
+
+        fig_weekly_airport.update_layout(
+            yaxis_title=None,
+            xaxis_title="주간 출발편 수"
+        )
+
+        st.plotly_chart(fig_weekly_airport, use_container_width=True)
+
+        st.divider()
+
+        # ------------------------------------------------------------
+        # 상세 테이블
+        # ------------------------------------------------------------
+        st.subheader("주간 출발 스케줄 상세")
+
+        weekly_detail_table = (
+            weekly_airport_summary
+            .rename(columns={
+                "destination_country": "도착국가",
+                "destination_city": "도착도시",
+                "destination_airport_code": "도착공항코드",
+                "destination_airport_name": "도착공항명",
+                "weekly_departure_flights": "주간출발편수"
+            })
+        )
+
+        st.dataframe(
+            weekly_detail_table,
+            use_container_width=True,
+            hide_index=True
+        )
 # ------------------------------------------------------------
 # 원본 데이터 테이블
 # ------------------------------------------------------------
