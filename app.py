@@ -169,7 +169,7 @@ if df.empty:
 # ------------------------------------------------------------
 # 사이드바 필터
 # ------------------------------------------------------------
-st.sidebar.header("필터")
+"""st.sidebar.header("필터")
 
 min_date = df["stat_month"].min().date()
 max_date = df["stat_month"].max().date()
@@ -205,7 +205,56 @@ top_n = st.sidebar.slider(
 
 st.sidebar.caption("모든 지표와 차트는 IIAC + KAC 합산 기준입니다.")
 st.sidebar.caption("KPI와 국가 TOP 차트는 선택 기간 내 가장 최신월 기준입니다.")
+"""
 
+# ------------------------------------------------------------
+# 월별 출국 통계 필터
+# ------------------------------------------------------------
+st.markdown("### 월별 출국 통계")
+
+with st.expander("월별 출국 통계 필터", expanded=False):
+    min_date = df["stat_month"].min().date()
+    max_date = df["stat_month"].max().date()
+
+    filter_col1, filter_col2, filter_col3 = st.columns([1.4, 1.4, 1])
+
+    with filter_col1:
+        date_range = st.date_input(
+            "조회 기간",
+            value=(min_date, max_date),
+            min_value=min_date,
+            max_value=max_date,
+            key="monthly_date_range"
+        )
+
+    if isinstance(date_range, tuple) and len(date_range) == 2:
+        start_date, end_date = date_range
+    else:
+        start_date, end_date = min_date, max_date
+
+    country_options = sorted(df["country"].dropna().unique().tolist())
+
+    with filter_col2:
+        selected_countries = st.multiselect(
+            "국가",
+            options=country_options,
+            default=[],
+            key="monthly_country_filter"
+        )
+
+    with filter_col3:
+        top_n = st.slider(
+            "국가 TOP N",
+            min_value=5,
+            max_value=30,
+            value=15,
+            step=5,
+            key="monthly_top_n"
+        )
+
+    st.caption(
+        "월별 출국 통계 필터입니다. KPI와 국가 TOP 차트는 선택 기간 내 가장 최신월 기준입니다."
+    )
 
 # ------------------------------------------------------------
 # 필터 적용
