@@ -20,7 +20,7 @@ st.caption(
 
 
 # ------------------------------------------------------------
-# Supabase 데이터 불러오기
+# Supabase 데이터 불러오기 - 월별 통계
 # ------------------------------------------------------------
 @st.cache_data(ttl=600)
 def load_airport_stats():
@@ -85,7 +85,9 @@ def load_airport_stats():
     return df
 
 
-df = load_airport_stats()
+# ------------------------------------------------------------
+# Supabase 데이터 불러오기 - 주간 국제선 출발 스케줄
+# ------------------------------------------------------------
 @st.cache_data(ttl=600)
 def load_weekly_route_summary():
     supabase = create_client(
@@ -155,6 +157,10 @@ def load_weekly_route_summary():
 
     return df_weekly
 
+
+df = load_airport_stats()
+
+
 # ------------------------------------------------------------
 # 데이터 없음 처리
 # ------------------------------------------------------------
@@ -167,58 +173,19 @@ if df.empty:
 
 
 # ------------------------------------------------------------
-# 사이드바 필터
-# ------------------------------------------------------------
-"""st.sidebar.header("필터")
-
-min_date = df["stat_month"].min().date()
-max_date = df["stat_month"].max().date()
-
-date_range = st.sidebar.date_input(
-    "조회 기간",
-    value=(min_date, max_date),
-    min_value=min_date,
-    max_value=max_date
-)
-
-if isinstance(date_range, tuple) and len(date_range) == 2:
-    start_date, end_date = date_range
-else:
-    start_date, end_date = min_date, max_date
-
-
-country_options = sorted(df["country"].dropna().unique().tolist())
-
-selected_countries = st.sidebar.multiselect(
-    "국가",
-    options=country_options,
-    default=[]
-)
-
-top_n = st.sidebar.slider(
-    "국가 TOP N",
-    min_value=5,
-    max_value=30,
-    value=15,
-    step=5
-)
-
-st.sidebar.caption("모든 지표와 차트는 IIAC + KAC 합산 기준입니다.")
-st.sidebar.caption("KPI와 국가 TOP 차트는 선택 기간 내 가장 최신월 기준입니다.")
-"""
-
-# ------------------------------------------------------------
 # 월별 출국 통계 필터
 # ------------------------------------------------------------
-st.markdown("### 월별 출국 통계")
+st.subheader("월별 출국 통계")
 
 with st.expander("월별 출국 통계 필터", expanded=False):
     min_date = df["stat_month"].min().date()
     max_date = df["stat_month"].max().date()
 
-    filter_col1, filter_col2, filter_col3 = st.columns([1.4, 1.4, 1])
+    monthly_filter_col1, monthly_filter_col2, monthly_filter_col3 = st.columns(
+        [1.4, 1.4, 1]
+    )
 
-    with filter_col1:
+    with monthly_filter_col1:
         date_range = st.date_input(
             "조회 기간",
             value=(min_date, max_date),
@@ -234,7 +201,7 @@ with st.expander("월별 출국 통계 필터", expanded=False):
 
     country_options = sorted(df["country"].dropna().unique().tolist())
 
-    with filter_col2:
+    with monthly_filter_col2:
         selected_countries = st.multiselect(
             "국가",
             options=country_options,
@@ -242,7 +209,7 @@ with st.expander("월별 출국 통계 필터", expanded=False):
             key="monthly_country_filter"
         )
 
-    with filter_col3:
+    with monthly_filter_col3:
         top_n = st.slider(
             "국가 TOP N",
             min_value=5,
@@ -253,8 +220,10 @@ with st.expander("월별 출국 통계 필터", expanded=False):
         )
 
     st.caption(
-        "월별 출국 통계 필터입니다. KPI와 국가 TOP 차트는 선택 기간 내 가장 최신월 기준입니다."
+        "월별 출국 통계 전용 필터입니다. "
+        "KPI와 국가 TOP 차트는 선택 기간 내 가장 최신월 기준입니다."
     )
+
 
 # ------------------------------------------------------------
 # 필터 적용
@@ -651,6 +620,7 @@ st.dataframe(
 
 st.divider()
 
+
 # ------------------------------------------------------------
 # 주간 국제선 출발 스케줄
 # ------------------------------------------------------------
@@ -931,6 +901,8 @@ else:
             use_container_width=True,
             hide_index=True
         )
+
+
 # ------------------------------------------------------------
 # 원본 데이터 테이블
 # ------------------------------------------------------------
