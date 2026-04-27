@@ -177,7 +177,7 @@ if df.empty:
 # ------------------------------------------------------------
 st.subheader("월별 출국 통계")
 
-with st.expander("월별 출국 통계 필터", expanded=False):
+with st.expander("월별 출국 통계 필터", expanded=True):
     min_date = df["stat_month"].min().date()
     max_date = df["stat_month"].max().date()
 
